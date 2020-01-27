@@ -57,7 +57,8 @@ namespace HealthChecks.UI.Core.Discovery.K8S
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                _logger.LogInformation($"Starting kubernetes service discovery on cluster {_discoveryOptions.ClusterHost}");
+                var clusterName = _discoveryOptions.InCluster ? "host" : _discoveryOptions.ClusterHost;
+                _logger.LogInformation($"Starting kubernetes service discovery on cluster {clusterName}");
 
                 using (var scope = _serviceProvider.CreateScope())
                 {
@@ -68,6 +69,23 @@ namespace HealthChecks.UI.Core.Discovery.K8S
                         var services = await _discoveryClient.GetServices(_discoveryOptions.ServicesLabel);
                         foreach (var item in services.Items)
                         {
+                            
+
+                            if (_discoveryOptions.IgnoreEndpoints.Any(p =>
+                                p.Name == _addressFactory.GetServiceName(item)))
+                            {
+                                continue;
+                                
+                            }
+
+                            var name = item.Metadata.Name;
+                            var deployment =
+                               await _discoveryClient.GetDeployment(item.Metadata.Name, item.Metadata.Namespace);
+
+                            if (deployment?.spec?.template?.spec?.containers?.Count >0)
+                            {
+                                name = GetDisplayName(name, deployment?.spec?.template?.spec?.containers[0].image);
+                            }
                             try
                             {
                                 var serviceAddress = _addressFactory.CreateAddress(item);
@@ -77,8 +95,8 @@ namespace HealthChecks.UI.Core.Discovery.K8S
                                     var statusCode = await CallClusterService(serviceAddress);
                                     if (IsValidHealthChecksStatusCode(statusCode))
                                     {
-                                        await RegisterDiscoveredLiveness(livenessDbContext, serviceAddress, item.Metadata.Name);
-                                        _logger.LogInformation($"Registered discovered liveness on {serviceAddress} with name {item.Metadata.Name}");
+                                        await RegisterDiscoveredLiveness(livenessDbContext, serviceAddress, name);
+                                        _logger.LogInformation($"Registered discovered liveness on {serviceAddress} with name {name}");
                                     }
                                 }
                             }
@@ -122,5 +140,14 @@ namespace HealthChecks.UI.Core.Discovery.K8S
 
             return livenessDb.SaveChangesAsync();
         }
+
+        public string GetDisplayName(string name,string containerImage)
+        {
+            var image = containerImage.Split('/')?[1];
+            var version = image.Split(':')?[1];
+            return $"{name} | {version}";
+        }
     }
+
+   
 }

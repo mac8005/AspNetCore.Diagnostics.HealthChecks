@@ -11,22 +11,29 @@ namespace HealthChecks.UI.Core.Discovery.K8S
         }
         public string CreateAddress(Service service)
         {
-            string address = string.Empty;
+            string address = $"{service.Metadata.Name}.{service.Metadata.Namespace}";
 
             var port = GetServicePort(service);
 
-            switch (service.Spec.PortType)
-            {
-                case PortType.LoadBalancer:
-                case PortType.NodePort:
-                    address = GetLoadBalancerAddress(service);
-                    break;
-                case PortType.ClusterIP:
-                    address = service.Spec.ClusterIP;
-                    break;
-            }
+            //switch (service.Spec.PortType)
+            //{
+            //    case PortType.LoadBalancer:
+            //    case PortType.NodePort:
+            //        address = GetLoadBalancerAddress(service);
+            //        break;
+            //    case PortType.ClusterIP:
+            //        address = service.Spec.ClusterIP;
+            //        break;
+            //}
 
             return $"http://{address}{port}/{_healthPath}";
+        }
+
+        public string GetServiceName(Service service)
+        {
+            string address = $"{service.Metadata.Name}.{service.Metadata.Namespace}";
+
+            return address;
         }
         private string GetLoadBalancerAddress(Service service)
         {
@@ -49,7 +56,7 @@ namespace HealthChecks.UI.Core.Discovery.K8S
                     port = service.Spec?.Ports?.FirstOrDefault()?.PortNumber.ToString() ?? "";
                     break;
                 case (PortType.NodePort):
-                    port = service.Spec?.Ports?.FirstOrDefault()?.NodePort.ToString() ?? "";
+                    port = service.Spec?.Ports?.FirstOrDefault()?.PortNumber.ToString() ?? "";
                     break;
             }
 

@@ -1,8 +1,10 @@
 ﻿using Newtonsoft.Json;
 using System;
+using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading.Tasks;
+using HealthChecks.UI.Core.Discovery.K8S.Deployment;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace HealthChecks.UI.Core.Discovery.K8S.Extensions
@@ -12,20 +14,51 @@ namespace HealthChecks.UI.Core.Discovery.K8S.Extensions
         internal static void ConfigureKubernetesClient(this HttpClient client, IServiceProvider serviceProvider)
         {
             var options = serviceProvider.GetRequiredService<KubernetesDiscoverySettings>();
-            
-            var validHttpEndpoint = Uri.TryCreate(options.ClusterHost, UriKind.Absolute, out var host)
-                && (host.Scheme == Uri.UriSchemeHttp || host.Scheme == Uri.UriSchemeHttps);
+
+            string token;
+            string hostString;
+
+            if (options.InCluster)
+            {
+                var clusterHost = Environment.GetEnvironmentVariable("KUBERNETES_SERVICE_HOST");
+                var clusterPort = Environment.GetEnvironmentVariable("KUBERNETES_SERVICE_PORT");
+
+                // Support IPv6 address hosts
+                if (clusterHost.Contains(":"))
+                {
+                    hostString = $"https://[{clusterHost}]:{clusterPort}";
+                }
+                else
+                {
+                    hostString = $"https://{clusterHost}:{clusterPort}";
+                }
+
+                var tokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token";
+                if (!File.Exists(tokenPath))
+                {
+                    throw new Exception($"A Kubernetes Service Account token was not mounted");
+                }
+                token = File.ReadAllText(tokenPath).Trim();
+            }
+            else
+            {
+                token = options.Token;
+                hostString = options.ClusterHost;
+            }
+
+            var validHttpEndpoint = Uri.TryCreate(hostString, UriKind.Absolute, out var host)
+                                    && (host.Scheme == Uri.UriSchemeHttp || host.Scheme == Uri.UriSchemeHttps);
 
             if (!validHttpEndpoint)
             {
-                throw new Exception($"{nameof(host)} is not a valid Http Uri");
+                throw new Exception($"{hostString} is not a valid Http Uri");
             }
 
             client.BaseAddress = host;
-                    
-             if (!string.IsNullOrEmpty(options.Token))
+
+            if (!string.IsNullOrEmpty(token))
             {
-                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", options.Token);
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
             }
         }
         internal static async Task<ServiceList> GetServices(this HttpClient client, string label = "")
@@ -34,5 +67,13 @@ namespace HealthChecks.UI.Core.Discovery.K8S.Extensions
             var content = await response.Content.ReadAsStringAsync();
             return JsonConvert.DeserializeObject<ServiceList>(content);
         }
+
+        internal static async Task<KubernetesDeployment> GetDeployment(this HttpClient client, string name, string namespaceName)
+        {
+            var response = await client.GetAsync($"{client.BaseAddress.AbsoluteUri}apis/apps/v1/namespaces/{namespaceName}/deployments/{name}");
+            var content = await response.Content.ReadAsStringAsync();
+            return JsonConvert.DeserializeObject<KubernetesDeployment>(content);
+        }
+
     }
 }
